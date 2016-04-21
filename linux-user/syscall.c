@@ -5853,9 +5853,13 @@ static abi_long qemu_execve(char *filename, char *argv[],
                   char *envp[])
 {
     char *i_arg = NULL, *i_name = NULL;
-    char **new_argp;
-    int argc, fd, ret, i, offset = 3;
+    char **qemu_argp, **argp;
+    int i, j;
+    size_t qemu_argc = 3, argc, host_envc, envpc;
+    int fd, ret;
     char *cp;
+    size_t def_envc = 0, undef_envc = 0;
+    char **def_env, **undef_env;
     char buf[BINPRM_BUF_SIZE];
 
     /* normal execve case */
@@ -5863,10 +5867,12 @@ static abi_long qemu_execve(char *filename, char *argv[],
         return get_errno(execve(filename, argv, envp));
     }
 
-    for (argc = 0; argv[argc] != NULL; argc++) {
-        /* nothing */ ;
-    }
+    /* count the number of arguments and environment variables */
+    for (argc = 0; argv[argc]; argc++);
+    for (host_envc = 0; environ[host_envc]; host_envc++);
+    for (envpc = 0; envp[envpc]; envpc++);
 
+    /* read the file header so we can check the shebang */
     fd = open(filename, O_RDONLY);
     if (fd == -1) {
         return get_errno(fd);
@@ -5927,37 +5933,75 @@ static abi_long qemu_execve(char *filename, char *argv[],
             i_arg = cp;
         }
 
-        if (i_arg) {
-            offset = 5;
-        } else {
-            offset = 4;
-        }
+        if (i_arg)
+            qemu_argc += 2;
+        else
+            qemu_argc += 1;
     }
 
-    new_argp = alloca((argc + offset + 1) * sizeof(void *));
-
-    /* Copy the original arguments with offset */
-    for (i = 0; i < argc; i++) {
-        new_argp[i + offset] = argv[i];
+    /* list environment variables to define */
+    def_env = alloca((envpc + 1) * sizeof(envp[0]));
+    for (i = 0; i != envpc; i++) {
+        for (j = 0; j != host_envc; j++)
+            if (!strcmp(envp[i], environ[j]))
+                break;
+        if (j == host_envc)
+            def_env[def_envc++] = envp[i];
     }
 
-    new_argp[0] = strdup(qemu_execve_path);
-    new_argp[1] = strdup("-0");
-    new_argp[offset] = filename;
-    new_argp[argc + offset] = NULL;
+    argc += def_envc * 2;
 
+    /* list environment variables to undefine */
+    undef_env = alloca((host_envc + 1) * sizeof(envp[0]));
+    for (i = 0; i != host_envc; i++) {
+        const char *const host_env = environ[i];
+	const size_t key_len = strchr(host_env, '=') - host_env;
+        for (j = 0; j != envpc; j++)
+            if (!strncmp(host_env, envp[j], key_len))
+                break;
+        if (j == envpc)
+            undef_env[undef_envc++] = strndup(environ[i], key_len);
+    }
+
+    argc += undef_envc * 2;
+
+    /* allocate the argument list */
+    argp = qemu_argp = alloca((qemu_argc + 1) * sizeof(void *));
+
+    /* set up the qemu arguments */
+    *argp++ = strdup(qemu_execve_path);
+
+    /* add arguments for the enironment variables */
+    for (i = 0; i < def_envc; i++) {
+        *argp++ = strdup("-E");
+        *argp++ = def_env[i];
+    }
+
+    for (i = 0; i < undef_envc; i++) {
+        *argp++ = strdup("-U");
+        *argp++ = undef_env[i];
+    }
+
+    /* add the path to the executable */
+    *argp++ = strdup("-0");
     if (i_name) {
-        new_argp[2] = i_name;
-        new_argp[3] = i_name;
-
-        if (i_arg) {
-            new_argp[4] = i_arg;
-        }
+        *argp++ = i_name;
+        *argp++ = i_name;
+        if (i_arg)
+            *argp++ = i_arg;
     } else {
-        new_argp[2] = argv[0];
+        *argp++ = argv[0];
     }
 
-    return get_errno(execve(qemu_execve_path, new_argp, envp));
+    *argp++ = filename;
+
+    /* copy the original arguments with offset */
+    for (i = 1; i < argc; i++)
+        *argp++ = argv[i];
+
+    *argp++ = NULL;
+
+    return get_errno(execv(qemu_execve_path, qemu_argp));
 }
 
 /* do_syscall() should always have a single exit point at the end so
