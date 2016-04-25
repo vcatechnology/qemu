@@ -5855,7 +5855,7 @@ static abi_long qemu_execve(char *filename, char *argv[],
     char *i_arg = NULL, *i_name = NULL;
     char **qemu_argp, **argp;
     int i, j;
-    size_t qemu_argc = 3, argc, host_envc, envpc;
+    size_t qemu_argc = 5, argc, host_envc, envpc;
     int fd, ret;
     char *cp;
     size_t def_envc = 0, undef_envc = 0;
@@ -5970,6 +5970,8 @@ static abi_long qemu_execve(char *filename, char *argv[],
 
     /* set up the qemu arguments */
     *argp++ = strdup(qemu_execve_path);
+    *argp++ = strdup("-L");
+    *argp++ = strdup(path("/"));
 
     /* add arguments for the enironment variables */
     for (i = 0; i < def_envc; i++) {
