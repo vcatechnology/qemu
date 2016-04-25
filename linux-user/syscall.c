@@ -5966,12 +5966,17 @@ static abi_long qemu_execve(char *filename, char *argv[],
     argc += undef_envc * 2;
 
     /* allocate the argument list */
+    if (do_strace)
+        qemu_argc++;
     argp = qemu_argp = alloca((qemu_argc + 1) * sizeof(void *));
 
     /* set up the qemu arguments */
     *argp++ = strdup(qemu_execve_path);
     *argp++ = strdup("-L");
     *argp++ = strdup(path("/"));
+
+    if (do_strace)
+        *argp++ = strdup("-strace");
 
     /* add arguments for the enironment variables */
     for (i = 0; i < def_envc; i++) {
